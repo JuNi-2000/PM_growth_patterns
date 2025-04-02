@@ -1,0 +1,90 @@
+---
+title: "p682 Import & QC"
+author: "Geert van Geest"
+date: "11/30/2021"
+output: html_document
+---
+
+```{r}
+library(Seurat)
+library(readxl)
+```
+
+```{r}
+dir.create("../plots")
+dir.create("../analysis")
+```
+
+## Loading in data
+
+SC014 is removed because of low quality/quantity. 
+
+```{r import_data, results='hide', cache=TRUE, cache.lazy=FALSE}
+
+sample_info <- read_excel("../metadata/sample_info.xlsx")
+# removing SC014
+sample_info <- sample_info[-which(sample_info$sample_name == "SC14"), ]
+data_dirs <- paste0(
+    "../../count_matrices/",
+    sample_info$sample_name
+)
+names(data_dirs) <- sample_info$sample_name
+sc.data <- Read10X(data_dirs)
+
+sc <- Seurat::CreateSeuratObject(
+    counts = sc.data,
+    project = "sc",
+    min.cells = 3,
+    min.features = 100
+)
+```
+
+## Adding metadata
+
+```{r}
+sample_info <- read_excel("../metadata/sample_info.xlsx")
+
+meta_si <- sample_info[match(sc$orig.ident, sample_info$sample_name),
+                       c("treatment", "treatment2", "sample_type",
+                         "subtype", "response", "stage")] |> 
+  as.data.frame()
+rownames(meta_si) <- colnames(sc)
+sc <- AddMetaData(sc, meta_si)
+```
+
+## Basic QC
+
+Some samples with high mitochondrial counts. 
+
+```{r violin_plots, fig.width=10, results = 'hide'}
+sc[["percent.mt"]] <- Seurat::PercentageFeatureSet(sc, pattern = "^MT-")
+
+p <- Seurat::VlnPlot(sc,
+    features = c(
+        "nFeature_RNA",
+        "nCount_RNA",
+        "percent.mt"
+    ), ncol = 3
+)
+print(p)
+
+pdf("../plots/violin_plots_qc.pdf", width = 12, height = 8)
+print(p)
+dev.off()
+```
+
+## Removal of low quality cells
+
+We decide to filter for cells having a minimum number of features of 500 and a maximum of 8000. Also cells with more than 30% mitochondrial counts are removed.
+
+```{r apply_filtering, results='hide'}
+sc <- subset(sc,
+    subset = nFeature_RNA > 500 & nFeature_RNA < 8000 & percent.mt < 30
+)
+```
+
+## Save object to disk
+
+```{r}
+saveRDS(sc, "../analysis/sc.rds")
+```
